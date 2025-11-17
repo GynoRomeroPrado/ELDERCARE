@@ -159,7 +159,34 @@ ELDERCARE/
 - AWS CLI configured
 - Android Studio / Xcode (for mobile development)
 
-### Quick Start
+### Quick Start (Docker - Recommended)
+
+**The fastest way to get started with the full stack:**
+
+```bash
+# Clone repository
+git clone https://github.com/your-org/eldercare.git
+cd eldercare
+
+# Setup environment
+cp backend/.env.example backend/.env
+
+# Start all services (Backend, PostgreSQL, Redis, LocalStack, etc.)
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Access services:
+# - API: http://localhost:3000
+# - API Docs: http://localhost:3000/api/docs
+# - pgAdmin: http://localhost:5050
+# - MailHog: http://localhost:8025
+```
+
+**📖 For detailed Docker setup, see [DOCKER_SETUP.md](./DOCKER_SETUP.md)**
+
+### Manual Setup (Without Docker)
 
 ```bash
 # Clone repository
@@ -170,12 +197,12 @@ cd eldercare
 cd backend
 npm install
 cp .env.example .env
-docker-compose up -d  # Start TimescaleDB
+# Configure PostgreSQL and Redis manually
 npm run migration:run
 npm run dev
 
 # Mobile app setup
-cd mobile
+cd ../mobile
 npm install
 npx pod-install  # iOS only
 npm run android  # or npm run ios

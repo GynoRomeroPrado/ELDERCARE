@@ -1,0 +1,178 @@
+# Docker Compose configuration for ELDERCARE+ local development
+# Includes backend API, PostgreSQL with TimescaleDB, and Redis
+
+version: '3.9'
+
+services:
+  # PostgreSQL with TimescaleDB extension
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: eldercare-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: eldercare
+      POSTGRES_USER: eldercare
+      POSTGRES_PASSWORD: eldercare_dev_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eldercare -d eldercare"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - eldercare-network
+
+  # Redis cache
+  redis:
+    image: redis:7-alpine
+    container_name: eldercare-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass eldercare_redis_password
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - eldercare-network
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: eldercare-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+
+      # Database configuration
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: eldercare
+      DB_USERNAME: eldercare
+      DB_PASSWORD: eldercare_dev_password
+
+      # Redis configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: eldercare_redis_password
+
+      # JWT configuration
+      JWT_SECRET: eldercare_jwt_secret_dev_change_in_production
+      JWT_EXPIRES_IN: 7d
+      JWT_REFRESH_SECRET: eldercare_jwt_refresh_secret_dev
+      JWT_REFRESH_EXPIRES_IN: 30d
+
+      # AWS configuration (for local development, use LocalStack or mock)
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      AWS_IOT_ENDPOINT: localhost
+
+      # CORS configuration
+      CORS_ORIGINS: http://localhost:3000,http://localhost:19006,http://localhost:8081
+
+      # Logging
+      LOG_LEVEL: debug
+
+      # Notification configuration (for development, use console)
+      TWILIO_ACCOUNT_SID: dev_account_sid
+      TWILIO_AUTH_TOKEN: dev_auth_token
+      TWILIO_VIDEO_API_KEY: dev_video_key
+      TWILIO_VIDEO_API_SECRET: dev_video_secret
+
+      # Email configuration
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_USER: ''
+      SMTP_PASSWORD: ''
+      SMTP_FROM: noreply@eldercare.local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/src:/app/src
+      - backend_node_modules:/app/node_modules
+    networks:
+      - eldercare-network
+    command: npm run start:dev
+
+  # MailHog (Email testing tool)
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: eldercare-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - eldercare-network
+
+  # LocalStack (AWS services emulation for local development)
+  localstack:
+    image: localstack/localstack:latest
+    container_name: eldercare-localstack
+    restart: unless-stopped
+    ports:
+      - "4566:4566"  # LocalStack Gateway
+      - "4510-4559:4510-4559"  # External services port range
+    environment:
+      SERVICES: s3,sqs,sns,iot,iot-data,secretsmanager,kms,cloudwatch
+      DEBUG: 1
+      DATA_DIR: /tmp/localstack/data
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - localstack_data:/tmp/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - eldercare-network
+
+  # pgAdmin (PostgreSQL management tool)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: eldercare-pgadmin
+    restart: unless-stopped
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@eldercare.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - eldercare-network
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  localstack_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+  backend_node_modules:
+    driver: local
+
+networks:
+  eldercare-network:
+    driver: bridge

@@ -1,0 +1,97 @@
+{
+  "dashboard": {
+    "title": "ELDERCARE+ Platform Monitoring",
+    "tags": ["eldercare", "iot", "health"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "API Response Time",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "p95 Response Time"
+          }
+        ],
+        "yaxes": [
+          {
+            "label": "Response Time (ms)",
+            "format": "ms"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Fall Detection Events",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(fall_events_total[5m])",
+            "legendFormat": "Fall Events/min"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Device Health",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum(device_online{status=\"ACTIVE\"})",
+            "legendFormat": "Online Devices"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Medication Adherence",
+        "type": "gauge",
+        "targets": [
+          {
+            "expr": "avg(medication_adherence_rate) * 100",
+            "legendFormat": "Adherence %"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                { "value": 0, "color": "red" },
+                { "value": 70, "color": "yellow" },
+                { "value": 90, "color": "green" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "Database Connections",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "pg_stat_database_numbackends{datname=\"eldercare\"}",
+            "legendFormat": "Active Connections"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Error Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{status=~\"5..\"}[5m])",
+            "legendFormat": "5xx Errors"
+          }
+        ]
+      }
+    ],
+    "refresh": "30s",
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    }
+  }
+}
