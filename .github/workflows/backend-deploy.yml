@@ -1,0 +1,313 @@
+name: Deploy Backend API
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-deploy.yml'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: eldercare-api
+  ECS_CLUSTER: eldercare-cluster
+  ECS_SERVICE: eldercare-api
+  ECS_TASK_DEFINITION: eldercare-api
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: eldercare_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run linter
+        working-directory: backend
+        run: npm run lint
+
+      - name: Run type check
+        working-directory: backend
+        run: npm run tsc
+
+      - name: Run unit tests
+        working-directory: backend
+        run: npm run test
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_DATABASE: eldercare_test
+          DB_USERNAME: test
+          DB_PASSWORD: test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+
+      - name: Run integration tests
+        working-directory: backend
+        run: npm run test:e2e
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_DATABASE: eldercare_test
+          DB_USERNAME: test
+          DB_PASSWORD: test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          files: backend/coverage/lcov.info
+          flags: backend
+          name: backend-coverage
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Snyk security scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high --file=backend/package.json
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: 'backend'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  build:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [test, security]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NODE_ENV=production
+
+      - name: Scan Docker image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-image-results.sarif'
+
+      - name: Upload image scan results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-image-results.sarif'
+
+  deploy:
+    name: Deploy to ECS
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set environment suffix
+        id: env-suffix
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "suffix=production" >> $GITHUB_OUTPUT
+          else
+            echo "suffix=staging" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.ECS_TASK_DEFINITION }}-${{ steps.env-suffix.outputs.suffix }} \
+            --query taskDefinition > task-definition.json
+
+      - name: Fill in new image ID in task definition
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.ECR_REPOSITORY }}
+          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+
+      - name: Deploy to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}-${{ steps.env-suffix.outputs.suffix }}
+          cluster: ${{ env.ECS_CLUSTER }}-${{ steps.env-suffix.outputs.suffix }}
+          wait-for-service-stability: true
+
+      - name: Run database migrations
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }}-${{ steps.env-suffix.outputs.suffix }} \
+            --task-definition ${{ env.ECS_TASK_DEFINITION }}-${{ steps.env-suffix.outputs.suffix }} \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_IDS }}],securityGroups=[${{ secrets.ECS_SECURITY_GROUP_ID }}],assignPublicIp=DISABLED}" \
+            --overrides '{"containerOverrides":[{"name":"${{ env.ECR_REPOSITORY }}","command":["npm","run","migration:run"]}]}' \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          echo "Migration task: $TASK_ARN"
+
+          aws ecs wait tasks-stopped --cluster ${{ env.ECS_CLUSTER }}-${{ steps.env-suffix.outputs.suffix }} --tasks $TASK_ARN
+
+          EXIT_CODE=$(aws ecs describe-tasks --cluster ${{ env.ECS_CLUSTER }}-${{ steps.env-suffix.outputs.suffix }} --tasks $TASK_ARN --query 'tasks[0].containers[0].exitCode' --output text)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Migration failed with exit code $EXIT_CODE"
+            exit 1
+          fi
+
+      - name: Verify deployment
+        run: |
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names eldercare-${{ steps.env-suffix.outputs.suffix }}-alb \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+
+          HEALTH_CHECK_URL="https://${ALB_DNS}/health"
+
+          for i in {1..10}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" $HEALTH_CHECK_URL)
+            if [ "$STATUS" == "200" ]; then
+              echo "Deployment verified successfully"
+              exit 0
+            fi
+            echo "Attempt $i: Health check returned $STATUS, waiting..."
+            sleep 30
+          done
+
+          echo "Deployment verification failed"
+          exit 1
+
+      - name: Notify deployment status
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            Backend deployment to ${{ steps.env-suffix.outputs.suffix }}
+            Status: ${{ job.status }}
+            Commit: ${{ github.sha }}
+            Author: ${{ github.actor }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "Deployment failed, initiating rollback..."
+
+          PREVIOUS_TASK_DEF=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }}-${{ steps.env-suffix.outputs.suffix }} \
+            --services ${{ env.ECS_SERVICE }}-${{ steps.env-suffix.outputs.suffix }} \
+            --query 'services[0].deployments[?status==`PRIMARY`].taskDefinition' \
+            --output text)
+
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }}-${{ steps.env-suffix.outputs.suffix }} \
+            --service ${{ env.ECS_SERVICE }}-${{ steps.env-suffix.outputs.suffix }} \
+            --task-definition $PREVIOUS_TASK_DEF \
+            --force-new-deployment
+
+          echo "Rollback initiated to task definition: $PREVIOUS_TASK_DEF"
