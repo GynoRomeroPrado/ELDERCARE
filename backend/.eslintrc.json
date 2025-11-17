@@ -1,0 +1,131 @@
+{
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "project": "tsconfig.json",
+    "tsconfigRootDir": ".",
+    "sourceType": "module",
+    "ecmaVersion": 2022
+  },
+  "plugins": [
+    "@typescript-eslint/eslint-plugin",
+    "prettier",
+    "import"
+  ],
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended",
+    "plugin:@typescript-eslint/recommended-requiring-type-checking",
+    "plugin:import/errors",
+    "plugin:import/warnings",
+    "plugin:import/typescript",
+    "prettier"
+  ],
+  "root": true,
+  "env": {
+    "node": true,
+    "jest": true
+  },
+  "ignorePatterns": [
+    ".eslintrc.js",
+    "dist",
+    "node_modules",
+    "coverage"
+  ],
+  "rules": {
+    // Errores TypeScript estrictos
+    "@typescript-eslint/no-explicit-any": "error",
+    "@typescript-eslint/explicit-function-return-type": [
+      "error",
+      {
+        "allowExpressions": true,
+        "allowTypedFunctionExpressions": true,
+        "allowHigherOrderFunctions": true
+      }
+    ],
+    "@typescript-eslint/explicit-module-boundary-types": "error",
+    "@typescript-eslint/no-unused-vars": [
+      "error",
+      {
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_"
+      }
+    ],
+    "@typescript-eslint/no-floating-promises": "error",
+    "@typescript-eslint/no-misused-promises": "error",
+    "@typescript-eslint/await-thenable": "error",
+    "@typescript-eslint/no-unnecessary-type-assertion": "error",
+    "@typescript-eslint/strict-boolean-expressions": [
+      "error",
+      {
+        "allowString": false,
+        "allowNumber": false,
+        "allowNullableObject": false
+      }
+    ],
+    "@typescript-eslint/no-non-null-assertion": "error",
+    "@typescript-eslint/prefer-nullish-coalescing": "error",
+    "@typescript-eslint/prefer-optional-chain": "error",
+    "@typescript-eslint/no-unnecessary-condition": "error",
+    "@typescript-eslint/switch-exhaustiveness-check": "error",
+
+    // Prevención de bugs comunes
+    "no-console": "warn",
+    "no-debugger": "error",
+    "no-alert": "error",
+    "no-duplicate-imports": "error",
+    "no-template-curly-in-string": "error",
+    "require-atomic-updates": "error",
+    "no-await-in-loop": "warn",
+    "no-promise-executor-return": "error",
+    "no-unreachable-loop": "error",
+
+    // Mejores prácticas
+    "eqeqeq": ["error", "always"],
+    "curly": ["error", "all"],
+    "no-eval": "error",
+    "no-implied-eval": "error",
+    "no-new-func": "error",
+    "no-return-await": "error",
+    "require-await": "error",
+    "no-throw-literal": "error",
+    "prefer-promise-reject-errors": "error",
+
+    // Imports ordenados
+    "import/order": [
+      "error",
+      {
+        "groups": [
+          "builtin",
+          "external",
+          "internal",
+          ["parent", "sibling"],
+          "index"
+        ],
+        "newlines-between": "always",
+        "alphabetize": {
+          "order": "asc",
+          "caseInsensitive": true
+        }
+      }
+    ],
+    "import/no-duplicates": "error",
+    "import/no-unresolved": "error",
+    "import/no-cycle": "error",
+
+    // Seguridad
+    "no-eval": "error",
+    "no-new-func": "error",
+    "no-script-url": "error",
+    "no-void": "error"
+  },
+  "overrides": [
+    {
+      "files": ["*.spec.ts", "*.e2e-spec.ts"],
+      "rules": {
+        "@typescript-eslint/no-explicit-any": "off",
+        "@typescript-eslint/no-unsafe-assignment": "off",
+        "@typescript-eslint/no-unsafe-member-access": "off"
+      }
+    }
+  ]
+}
